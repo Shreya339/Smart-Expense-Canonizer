@@ -6,7 +6,7 @@ This project is intentionally designed **not** as a “smart model demo”, but 
 
 ---
 
-## 🔑 Core Philosophy
+##  Core Philosophy
 
 > **Accuracy is not enough. Trust is the real problem.**
 
@@ -21,7 +21,7 @@ The system is built to **know when not to guess**.
 
 ---
 
-## 🧠 What the System Does
+##  What the System Does
 
 When a user submits an expense description:
 
@@ -43,7 +43,7 @@ It says:
 
 ---
 
-## 🏗️ High‑Level Architecture
+##  High‑Level Architecture
 
 ```
 ┌────────────┐
@@ -79,23 +79,23 @@ It says:
 
 ---
 
-## 🧩 Decision Layers (In Order)
+##  Decision Layers (In Order)
 
-### 1️⃣ PII Redaction
+### 1️. PII Redaction
 Sensitive data (emails, phone numbers, etc.) is removed **before any AI decision**.
 
-### 2️⃣ Embedding Similarity (Primary Path)
+### 2️. Embedding Similarity (Primary Path)
 - Merchant descriptions are embedded
 - Compared against historical transactions
 - High similarity ⇒ **reuse past category confidently**
 - Fast, cheap, consistent, explainable
 
-### 3️⃣ Rules Engine (Deterministic Safety Net)
+### 3️. Rules Engine (Deterministic Safety Net)
 - Explicit mappings (e.g., Uber → Travel)
 - Predictable and auditable behavior
 - Prevents unnecessary LLM calls
 
-### 4️⃣ LLM Fallback (Last Resort)
+### 4️. LLM Fallback (Last Resort)
 - OpenAI called first (self‑consistency logic)
 - Gemini used as fallback
 - Strict JSON validation + category whitelist
@@ -105,7 +105,7 @@ AI is used **only when necessary**.
 
 ---
 
-## 🛡️ Trust & Safety Outputs
+##  Trust & Safety Outputs
 
 Every classification returns:
 
@@ -119,7 +119,7 @@ No silent failures. No black boxes.
 
 ---
 
-## 🔍 Risk Scoring Logic
+##  Risk Scoring Logic
 
 Risk increases when:
 - Confidence is low
@@ -136,7 +136,7 @@ Risk is capped at **1.0** and mapped to:
 
 ---
 
-## 🔁 Counterfactual Reasoning
+##  Counterfactual Reasoning
 
 The `/counterfactual` endpoint answers:
 
@@ -146,7 +146,7 @@ This detects **fragile or unstable decisions**, which is critical in financial w
 
 ---
 
-## 🧪 Testing Strategy
+##  Testing Strategy
 
 - **Unit tests** for:
   - Risk scoring
@@ -160,7 +160,7 @@ Tests are written with clarity and comments — like production code.
 
 ---
 
-## 🚀 Running the Project
+##  Running the Project
 
 Provide OPENAI_API_KEY and GEMINI_API_KEY in backend/.env
 
@@ -193,7 +193,7 @@ DELETE FROM "transaction";
 ```
 ---
 
-## 📌 Why This Matters
+##  Why This Matters
 
 Financial systems cannot afford:
 - Confidently wrong AI
@@ -207,7 +207,7 @@ This system is built to:
 
 ---
 
-## ✨ Final Note
+##  Final Note
 
 This project reflects how I think about **responsible AI systems**:
 
