@@ -1,6 +1,5 @@
 # ---------- Imports ----------
 from .rules import clean_text, rules_classify
-# from .llm_service import classify_with_models, enhanced_classify
 from .llm_service import classify_with_models
 from .config import CONFIDENCE_THRESHOLD, EMBEDDING_SIMILARITY_THRESHOLD
 from .embeddings import compute_and_track_embedding, find_similar, upsert_merchant
@@ -10,7 +9,7 @@ from .pii import redact
 
 
 # =====================================================
-# MAIN PIPELINE (DRIFT-AWARE)
+# MAIN PIPELINE (DRIFT + HUMAN-IN-THE-LOOP AWARE)
 # =====================================================
 def classify_pipeline(description: str):
 
@@ -19,12 +18,10 @@ def classify_pipeline(description: str):
     # -------------------------------------------------
     red_desc, had_pii, pii_flags = redact(description)
 
-
     # -------------------------------------------------
     # STEP 2 — NORMALIZE TEXT
     # -------------------------------------------------
     clean = clean_text(red_desc)
-
 
     # -------------------------------------------------
     # STEP 3 — EMBED + TRACK DRIFT
@@ -36,9 +33,8 @@ def classify_pipeline(description: str):
     override_count = 0
     unseen = True
 
-
     # -------------------------------------------------
-    # STEP 4 — SEARCH MEMORY FOR SIMILAR MERCHANT
+    # STEP 4 — SEARCH MERCHANT MEMORY
     # -------------------------------------------------
     if emb:
         match, sim = find_similar(emb)
@@ -49,7 +45,43 @@ def classify_pipeline(description: str):
             emb_sim = sim
             override_count = match.num_overrides
 
-            # ---------- AUTO-CLASSIFY IF STRONG MATCH ----------
+            # =====================================================
+            # 🔒 HUMAN-VERIFIED MERCHANT (HIGHEST PRIORITY)
+            # =====================================================
+            if (
+                match.num_overrides > 0
+                and match.category_label
+                and sim >= EMBEDDING_SIMILARITY_THRESHOLD
+            ):
+
+                result = {
+                    "category": match.category_label,
+                    "confidence": 0.95,
+                    "explanation": "Human-verified merchant override.",
+                    "normalized_merchant": clean,
+                    "source": "human_verified",
+                    "needs_review": False,
+                }
+
+                evidence = [
+                    f"Human corrected merchant '{match.merchant_name}'",
+                    f"Embedding similarity {sim:.2f}",
+                    "Locked by human override",
+                ]
+
+                risk, risk_flags = compute_risk(
+                    confidence=0.95,
+                    low_sim=False,
+                    unseen=False,
+                    overrides=match.num_overrides,
+                    flags=[]
+                )
+
+                return result, evidence, risk, risk_flags, had_pii
+
+            # -------------------------------------------------
+            # HIGH-CONFIDENCE EMBEDDING AUTO-CLASSIFY
+            # -------------------------------------------------
             if sim >= EMBEDDING_SIMILARITY_THRESHOLD and match.category_label:
 
                 result = {
@@ -57,7 +89,7 @@ def classify_pipeline(description: str):
                     "confidence": 0.9,
                     "explanation": "Embedding merchant match.",
                     "normalized_merchant": clean,
-                    "source": "embedding"
+                    "source": "embedding",
                 }
 
                 evidence = build_evidence(
@@ -66,41 +98,39 @@ def classify_pipeline(description: str):
                     emb_match_name,
                     emb_sim,
                     override_count,
-                    "embedding"
+                    "embedding",
                 )
 
-                # ---------- APPLY DRIFT AS RISK ----------
                 extra_flags = []
-                if drift_flag and not unseen:
+                if drift_flag:
                     extra_flags.append("embedding_drift_detected")
-                    evidence.append("Embedding drift detected vs historical merchant patterns")
+                    evidence.append(
+                        "Embedding drift detected vs historical merchant patterns"
+                    )
 
                 risk, risk_flags = compute_risk(
                     result["confidence"],
-                    False,          # not low similarity
-                    unseen,
-                    override_count,
-                    extra_flags + pii_flags
+                    low_sim=False,
+                    unseen=unseen,
+                    overrides=override_count,
+                    flags=extra_flags + pii_flags,
                 )
 
                 return result, evidence, risk, risk_flags, had_pii
 
-
     # -------------------------------------------------
     # STEP 5 — RULE ENGINE
     # -------------------------------------------------
-    rule_hit = False
-    rule_token = None
-
     rc = rules_classify(clean)
 
-    if rc and rc == "AMBIGUOUS":
+    if rc == "AMBIGUOUS":
         result = {
             "category": "Needs Review",
             "confidence": 0.0,
             "explanation": "Multiple conflicting merchant matches detected",
             "normalized_merchant": clean,
-            "source": "rules"
+            "source": "rules",
+            "needs_review": True,
         }
 
         evidence = [
@@ -109,61 +139,45 @@ def classify_pipeline(description: str):
 
         risk, risk_flags = compute_risk(
             result["confidence"],
-            False,
-            unseen,
-            override_count,
-            ["ambiguous_rules_match"] + pii_flags
+            low_sim=False,
+            unseen=unseen,
+            overrides=override_count,
+            flags=["ambiguous_rules_match"] + pii_flags,
         )
 
         return result, evidence, risk, risk_flags, had_pii
 
-
     elif rc:
-        rule_hit = True
-
-        for token in [
-            "uber","lyft","delta","united",
-            "starbucks","ubereats","dropbox",
-            "atlassian","spotify","netflix",
-            "verizon","t-mobile","comcast"
-        ]:
-            if token in clean:
-                rule_token = token
-                break
-
         result = {
             "category": rc,
             "confidence": 0.95,
-            "explanation": "Rule based classification",
+            "explanation": "Rule-based classification",
             "normalized_merchant": clean,
-            "source": "rules"
+            "source": "rules",
+            "needs_review": False,
         }
 
         evidence = build_evidence(
-            rule_hit, rule_token,
-            emb_match_name, emb_sim,
+            True,
+            None,
+            emb_match_name,
+            emb_sim,
             override_count,
-            "rules"
+            "rules",
         )
-
-        extra_flags = []
-        if drift_flag and not unseen:
-            extra_flags.append("embedding_drift_detected")
-            evidence.append("Embedding drift detected vs historical merchant patterns")
 
         risk, risk_flags = compute_risk(
             result["confidence"],
-            False,
-            unseen,
-            override_count,
-            extra_flags + pii_flags
+            low_sim=False,
+            unseen=unseen,
+            overrides=override_count,
+            flags=pii_flags,
         )
 
         return result, evidence, risk, risk_flags, had_pii
 
-
     # -------------------------------------------------
-    # STEP 6 — LLM FALLBACK (LOCKED LOGIC)
+    # STEP 6 — LLM FALLBACK (LAST RESORT)
     # -------------------------------------------------
     res, meta = classify_with_models(description)
 
@@ -173,29 +187,26 @@ def classify_pipeline(description: str):
             "confidence": 0.0,
             "explanation": "All model calls failed",
             "normalized_merchant": clean,
-            "source": "llm"
+            "source": "llm",
+            "needs_review": True,
         }, [], 1.0, ["model_failure"], had_pii
 
-
     needs_review = (
-        float(res.get("confidence", 0)) < CONFIDENCE_THRESHOLD or
-        res.get("category") == "Needs Review"
+        float(res.get("confidence", 0)) < CONFIDENCE_THRESHOLD
+        or res.get("category") == "Needs Review"
     )
 
     result = {
         "category": res.get("category", "Needs Review"),
         "confidence": float(res.get("confidence", 0)),
         "explanation": res.get("explanation", ""),
-        "normalized_merchant": res.get("normalized_merchant", clean),
+        "normalized_merchant": clean,
         "source": "llm",
         "needs_review": needs_review,
-
-        # 🔐 TRUST SIGNALS (PASSTHROUGH)
         "agreement_score": meta.get("agreement_score"),
         "self_consistent": meta.get("self_consistent"),
         "cross_model_used": meta.get("cross_model_used"),
     }
-
 
     # -------------------------------------------------
     # STEP 7 — BUILD EVIDENCE + RISK
@@ -208,16 +219,12 @@ def classify_pipeline(description: str):
         emb_match_name,
         emb_sim,
         override_count,
-        "llm"
+        "llm",
     )
 
-    # Combine ALL flags that should affect risk
-    extra_flags = (
-        meta.get("risk_flags", []) +
-        pii_flags
-    )
+    extra_flags = meta.get("risk_flags", []) + pii_flags
 
-    if drift_flag and not unseen:
+    if drift_flag:
         extra_flags.append("embedding_drift_detected")
         evidence.append(
             "Embedding drift detected vs historical merchant patterns"
@@ -225,20 +232,19 @@ def classify_pipeline(description: str):
 
     risk, risk_flags = compute_risk(
         result["confidence"],
-        low_sim,
-        unseen,
-        override_count,
-        extra_flags
+        low_sim=low_sim,
+        unseen=unseen,
+        overrides=override_count,
+        flags=extra_flags,
     )
 
-
     # -------------------------------------------------
-    # STEP 8 — UPDATE MEMORY
+    # STEP 8 — UPDATE MEMORY (AI LEARNING ONLY IF NO OVERRIDE)
     # -------------------------------------------------
     upsert_merchant(clean, emb, result["category"])
 
-
     return result, evidence, risk, risk_flags, had_pii
+
 
 
 

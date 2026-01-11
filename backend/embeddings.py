@@ -64,6 +64,9 @@ def find_similar(embedding: List[float]) -> Tuple[Optional[MerchantEmbedding], f
 
         for r in rows:
             vec = json.loads(r.embedding_json)
+            # Skip merchants with empty embeddings (they can't be matched by similarity)
+            if not vec or len(vec) == 0:
+                continue
             sim = cosine(vec, embedding)
 
             if sim > best_sim:
@@ -88,7 +91,7 @@ def upsert_merchant(name: str, embedding: Optional[List[float]], category: Optio
             row = MerchantEmbedding(
                 merchant_name=name,
                 embedding_json=json.dumps(embedding or []),
-                category_label=category,
+                category_label = category if category != "Needs Review" else None,
                 num_seen=1,
                 num_overrides=1 if overridden else 0
             )
@@ -100,7 +103,8 @@ def upsert_merchant(name: str, embedding: Optional[List[float]], category: Optio
             if overridden:
                 row.num_overrides += 1
 
-            if category:
+            # Only learn from humans when category is meaningful
+            if category and category != "Needs Review":
                 row.category_label = category
 
             if embedding:

@@ -22,11 +22,18 @@ from .schemas import (
     ClassifyRequest,
     ClassifyResponse,
     CounterfactualRequest,
-    CounterfactualResponse
+    CounterfactualResponse,
+    CorrectionRequest,
+    CorrectionResponse
 )
 from .classifier import classify_pipeline
 from .rules import clean_text
+from .embeddings import upsert_merchant, embed_text
 
+
+# =========================================================
+# APP SETUP
+# =========================================================
 
 app = FastAPI()
 
@@ -50,9 +57,9 @@ def on_startup():
 @app.post("/classify")
 def classify(req: ClassifyRequest):
     """
-    UI --> FastAPI --> classifier pipeline --> SQLite log --> UI
+    UI → FastAPI → classifier → SQLite audit → UI
 
-    This endpoint is intentionally thin.
+    Thin API layer.
     All intelligence lives in the classifier.
     """
 
@@ -83,6 +90,7 @@ def classify(req: ClassifyRequest):
     with get_session() as session:
         session.add(tx)
         session.commit()
+        session.refresh(tx)  # <-- needed for HITL
 
     # ---------- Risk Level ----------
     risk_level = (
@@ -93,6 +101,8 @@ def classify(req: ClassifyRequest):
 
     # ---------- Structured Response ----------
     return {
+        "transaction_id": tx.id,   # needed for human correction
+
         "decision": {
             "final_category": result["category"],
             "confidence": result["confidence"],
@@ -123,6 +133,59 @@ def classify(req: ClassifyRequest):
     }
 
 
+# =========================================================
+#   HUMAN-IN-THE-LOOP CORRECTION
+# =========================================================
+@app.post("/correct", response_model=CorrectionResponse)
+def apply_correction(req: CorrectionRequest):
+    """
+    Human correction endpoint.
+
+    This is the ONLY place where learning is allowed.
+    """
+    print("Correcter is called")
+
+    with get_session() as session:
+        tx = session.get(Transaction, req.transaction_id)
+
+        if not tx:
+            return CorrectionResponse(
+                success=False,
+                message="Transaction not found"
+            )
+            
+        # If already overridden, prevent double-correction
+        if tx.overridden:
+            return CorrectionResponse(
+                success=False,
+                message="Transaction already corrected"
+            )
+
+        # ---------- Apply correction ----------
+        old_category = tx.final_category
+        tx.final_category = req.corrected_category
+        tx.overridden = True
+        tx.needs_review = False
+
+        session.add(tx)
+        session.commit()
+
+        # ---------- Update merchant memory SAFELY ----------
+        # Learning happens ONLY after human confirmation
+        # Compute embedding so future classifications can find this merchant by similarity
+        merchant_embedding = embed_text(tx.description_clean)
+        upsert_merchant(
+            name=tx.description_clean,
+            embedding=merchant_embedding,
+            category=req.corrected_category,
+            overridden=True
+        )
+
+    return CorrectionResponse(
+        success=True,
+        message=f"Category corrected from '{old_category}' to '{req.corrected_category}'"
+    )
+
 
 # =========================================================
 #   COUNTERFACTUAL  —  WHAT-IF TESTING
@@ -131,10 +194,10 @@ def classify(req: ClassifyRequest):
 def counterfactual(req: CounterfactualRequest):
     """
     Ask:
-       Does adding text like `client dinner`
-       change the expense category?
+      Does adding text like 'client dinner'
+      change the category?
 
-    This demonstrates reasoning robustness.
+    Used to test reasoning robustness.
     """
 
     base, _, _, _, _ = classify_pipeline(req.description)
