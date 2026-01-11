@@ -193,7 +193,7 @@ DELETE FROM "transaction";
 ```
 ---
 
-## 📌 Why This Matters (Fintech Framing)
+## 📌 Why This Matters
 
 Financial systems cannot afford:
 - Confidently wrong AI
