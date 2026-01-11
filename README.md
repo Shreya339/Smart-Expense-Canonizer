@@ -1,4 +1,4 @@
-# Smart Expense Canonizer — Trust‑First AI Classification System
+# Smart Expense Canonizer - Trust‑First AI Classification System
 
 Smart Expense Canonizer is a **financial‑grade, explainable AI system** that classifies expense transactions while prioritizing **trust, safety, and auditability** over raw automation.
 
