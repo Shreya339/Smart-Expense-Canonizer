@@ -47,14 +47,15 @@ It says:
 
 ```
 ┌────────────┐
-│  Streamlit │   ← UI
+│  Streamlit │   ← UI (Streamlit Web Interface)
 └─────┬──────┘
       │
       ▼
 ┌────────────┐
 │  FastAPI   │   ← API Layer
-│  /classify │
-│ /counterf. │
+│  /classify │   ← Main classification endpoint
+│  /correct  │   ← Human correction endpoint
+│ /counterfactual │ ← What-if testing endpoint
 └─────┬──────┘
       │
       ▼
@@ -85,10 +86,12 @@ It says:
 Sensitive data (emails, phone numbers, etc.) is removed **before any AI decision**.
 
 ### 2️. Embedding Similarity (Primary Path)
-- Merchant descriptions are embedded
-- Compared against historical transactions
-- High similarity ⇒ **reuse past category confidently**
+- Merchant descriptions are embedded using OpenAI's text-embedding-3-small
+- Compared against historical transactions using cosine similarity
+- High similarity (≥0.90) ⇒ **reuse past category confidently**
+- **Human-verified merchants** (previously corrected) are prioritized
 - Fast, cheap, consistent, explainable
+- Supports spelling variations and merchant name evolution
 
 ### 3️. Rules Engine (Deterministic Safety Net)
 - Explicit mappings (e.g., Uber → Travel)
@@ -109,13 +112,29 @@ AI is used **only when necessary**.
 
 Every classification returns:
 
-- **Confidence Score** (model certainty)
-- **Risk Score** (system‑level safety)
-- **Needs Review flag**
-- **Evidence Trail** (why this decision happened)
-- **Source Attribution** (embedding / rules / LLM)
+- **Confidence Score** (model certainty, 0.0-1.0)
+- **Risk Score** (system‑level safety, 0.0-1.0)
+- **Needs Review flag** (should human review this?)
+- **Evidence Trail** (human-readable explanation of decision)
+- **Source Attribution** (embedding / rules / llm / human_verified)
+- **Trust Signals** (self-consistency, cross-model agreement, risk flags)
+- **PII Redaction Flags** (whether sensitive data was detected and removed)
 
 No silent failures. No black boxes.
+
+### Source Types
+
+- **`rules`**: Deterministic rule-based classification (confidence: 0.95)
+- **`embedding`**: Semantic similarity match from merchant memory (confidence: 0.90)
+- **`human_verified`**: Previously corrected by human (confidence: 0.95, highest priority)
+- **`llm`**: AI model classification (confidence: varies based on model certainty)
+
+### Source Types
+
+- **`rules`**: Deterministic rule-based classification (confidence: 0.95)
+- **`embedding`**: Semantic similarity match from merchant memory (confidence: 0.90)
+- **`human_verified`**: Previously corrected by human (confidence: 0.95, highest priority)
+- **`llm`**: AI model classification (confidence: varies based on model certainty)
 
 ---
 
@@ -140,39 +159,188 @@ Risk is capped at **1.0** and mapped to:
 
 The `/counterfactual` endpoint answers:
 
-> “If the description changed slightly, would the category change?”
+> "If the description changed slightly, would the category change?"
 
 This detects **fragile or unstable decisions**, which is critical in financial workflows.
+
+Example:
+- Base: "Dinner at restaurant" → "Meals & Entertainment"
+- With modifier "client dinner": Still "Meals & Entertainment" (stable) or changes (fragile)
+
+---
+
+##  Human-in-the-Loop Learning
+
+The `/correct` endpoint enables safe learning from human corrections:
+
+### How It Works
+
+1. **Human Reviews Transaction**: When a transaction is flagged as "Needs Review" or user wants to correct it
+2. **Correction Submitted**: User submits corrected category via `/correct` endpoint
+3. **Safe Learning**: 
+   - Transaction is marked as overridden in the database
+   - Merchant embedding is computed and stored with corrected category
+   - Merchant memory is updated with human-verified label
+4. **Future Classifications**: 
+   - When the same merchant appears again, the system uses the human-verified category
+   - Source shows as "human_verified" with high confidence (0.95)
+   - System prioritizes human corrections over AI predictions
+
+### Key Safety Features
+
+-  Corrections are explicitly tracked (no silent overrides)
+-  Embeddings are computed during correction for future similarity matching
+-  Double-correction is prevented (transactions can only be corrected once)
+-  Full audit trail in database
+-  Human-verified merchants are prioritized over other classification paths
+
+---
+
+##  API Endpoints
+
+### `POST /classify`
+Main classification endpoint. Accepts expense description and returns classification with confidence, risk, and evidence.
+
+**Request:**
+```json
+{
+  "description": "Uber ride to airport",
+  "amount": 45.50,
+  "date": "2024-01-15"
+}
+```
+
+**Response:**
+```json
+{
+  "transaction_id": 123,
+  "decision": {
+    "final_category": "Travel",
+    "confidence": 0.95,
+    "needs_review": false,
+    "risk_level": "Low",
+    "source": "rules"
+  },
+  "trust": {
+    "agreement_score": 1.0,
+    "self_consistent": true,
+    "cross_model_used": false,
+    "risk_flags": []
+  },
+  "evidence": {
+    "merchant_normalized": "uber ride to airport",
+    "evidence_list": ["Matched rule token 'uber'", "Confirmed by rules"],
+    "summary": "Rule-based classification"
+  },
+  "risk": {
+    "risk_score": 0.0,
+    "needs_review": false,
+    "pii_redaction": false,
+    "risk_flags": []
+  }
+}
+```
+
+### `POST /correct`
+Human correction endpoint. Updates transaction category and merchant memory.
+
+**Request:**
+```json
+{
+  "transaction_id": 123,
+  "corrected_category": "Travel"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Category corrected from 'Needs Review' to 'Travel'"
+}
+```
+
+### `POST /counterfactual`
+What-if testing endpoint. Tests if adding a modifier changes the classification.
+
+**Request:**
+```json
+{
+  "description": "Dinner at restaurant",
+  "modifier": "client dinner"
+}
+```
+
+**Response:**
+```json
+{
+  "original_category": "Meals & Entertainment",
+  "new_category": "Meals & Entertainment",
+  "changed": false,
+  "trigger_words": ["client", "dinner"],
+  "analysis_summary": "Modifier changed category: false"
+}
+```
+
+Example:
+- Base: "Dinner at restaurant" → "Meals & Entertainment"
+- With modifier "client dinner": Still "Meals & Entertainment" (stable) or changes (fragile)
 
 ---
 
 ##  Testing Strategy
 
 - **Unit tests** for:
-  - Risk scoring
-  - Evidence generation
-  - Guardrails
+  - Risk scoring (`test_risk.py`)
+  - Evidence generation (`test_evidence.py`)
+  - Guardrails (`test_guardrails.py`)
+  - Rules engine (`test_rules.py`)
 - **Integration tests** for:
-  - `/classify` endpoint
+  - `/classify` endpoint (`test_classify_api.py`)
   - End‑to‑end API behavior
 
 Tests are written with clarity and comments — like production code.
+
+Run tests with:
+```bash
+pytest
+```
+
+Run tests with:
+```bash
+pytest
+```
 
 ---
 
 ##  Running the Project
 
-Provide OPENAI_API_KEY and GEMINI_API_KEY in backend/.env
+### Prerequisites
 
-### VENV
-```
+1. **Environment Setup**: Create `backend/.env` file with:
+   ```
+   OPENAI_API_KEY=your_openai_key_here
+   GEMINI_API_KEY=your_gemini_key_here
+   ```
+
+2. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### Virtual Environment (Recommended)
+
+**Windows:**
+```bash
 .venv\Scripts\activate
 ```
+
 
 ### Backend
 ```bash
 python -m uvicorn backend.main:app --reload
 ```
+
 
 ### UI
 ```bash
@@ -180,16 +348,56 @@ cd ui
 streamlit run app.py
 ```
 
+The UI provides:
+- **Single Entry**: Classify individual transactions
+- **CSV Upload**: Batch processing of transactions
+- **Counterfactual Testing**: What-if analysis interface
+- **Human Correction Interface**: Review and correct classifications
+- **Real-time Results**: View confidence, risk, evidence, and trust signals
+
+The UI will open in your browser (typically `http://localhost:8501`)
+
 ### Tests
 ```bash
 pytest
 ```
-### DB
+
+### Database
+
+The system uses SQLite with two main tables:
+
+- **`transaction`**: Audit log of all classifications
+  - Stores raw/cleaned descriptions, predictions, confidence, risk scores
+  - Tracks overrides and human corrections
+  - Full audit trail for compliance
+
+- **`merchantembedding`**: Merchant memory/learning database
+  - Stores merchant names, embeddings, category labels
+  - Tracks how many times each merchant was seen
+  - Tracks human override counts
+  - Enables fast similarity matching for future classifications
+
+**Reset database:**
 ```bash
 sqlite3 transactions.db
 .tables
 DELETE FROM merchantembedding;
 DELETE FROM "transaction";
+```
+
+**View transactions:**
+```sql
+SELECT id, description_clean, predicted_category, confidence, source, overridden 
+FROM "transaction" 
+ORDER BY created_at DESC 
+LIMIT 10;
+```
+
+**View merchant memory:**
+```sql
+SELECT merchant_name, category_label, num_seen, num_overrides 
+FROM merchantembedding 
+ORDER BY num_seen DESC;
 ```
 ---
 
