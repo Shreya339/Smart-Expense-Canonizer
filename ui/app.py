@@ -66,6 +66,119 @@ with tab1:
             st.subheader("RAW Backend JSON")
             st.json(st.session_state.classification_response)
 
+    # =========================================================
+    # CLASSIFICATION UI — SHOWN ONLY FOR /classify
+    # =========================================================
+    classification_response = st.session_state.classification_response
+
+    if classification_response and "decision" in classification_response:
+
+        decision = classification_response.get("decision", {})
+        trust = classification_response.get("trust", {})
+        evidence = classification_response.get("evidence", {})
+        risk = classification_response.get("risk", {})
+
+        st.markdown("### Decision Quality")
+
+        col1, col2 = st.columns(2)
+
+        conf = decision.get("confidence")
+        agree = trust.get("agreement_score")
+
+        col1.metric("Model Confidence", f"{conf:.2f}" if conf is not None else "-")
+        col2.metric("Cross-Model Agreement", f"{agree:.2f}" if agree is not None else "-")
+
+        # ---------- DECISION SUMMARY ----------
+        st.markdown("### 🟩 Decision Summary")
+
+        if decision.get("risk_level") == "High":
+            st.error("🔴 High Risk — Human Review Recommended")
+        elif decision.get("needs_review"):
+            st.warning("⚠ Human Review Recommended")
+        else:
+            st.success("🟢 Low-Risk Classification")
+
+        st.json(
+            {
+                "Final Category": decision.get("final_category"),
+                "Confidence": decision.get("confidence"),
+                "Needs Review": decision.get("needs_review"),
+                "Risk Level": decision.get("risk_level"),
+                "Source": decision.get("source"),
+            }
+        )
+
+        # ---------- TRUST SIGNALS ----------
+        st.markdown("### 🟦 Model Trust Signals")
+        st.json(trust)
+
+        # ---------- EVIDENCE ----------
+        st.markdown("### 🟪 Evidence Trail")
+        st.json(evidence)
+
+        # ---------- RISK ----------
+        st.markdown("### 🟨 Risk & Safety Flags")
+        st.json(risk)
+
+
+        # =========================================================
+        # HUMAN-IN-THE-LOOP CORRECTION
+        # =========================================================
+        st.markdown("### ✏️ Human Review & Correction")
+
+        tx_id = classification_response.get("transaction_id")
+        current_category = decision.get("final_category")
+
+        if tx_id and decision.get("needs_review"):
+
+            st.warning("This transaction is flagged for human review.")
+
+            with st.form("human_override_form"):
+
+                categories = [
+                    "Travel",
+                    "Meals & Entertainment",
+                    "Software / SaaS",
+                    "Office Supplies",
+                    "Utilities",
+                    "Subscriptions",
+                    "Income",
+                    "Rent",
+                    "Contractors",
+                    "Advertising & Marketing",
+                    "Other Expenses",
+                    "Needs Review",
+                ]
+
+                st.session_state.corrected_category = st.selectbox(
+                    "Correct Category",
+                    options=categories,
+                    index=categories.index(current_category)
+                    if current_category in categories
+                    else categories.index("Needs Review"),
+                )
+
+                submitted = st.form_submit_button("Submit Correction")
+
+            if submitted:
+                override_res = requests.post(
+                    f"{API_BASE}/correct",
+                    json={
+                        "transaction_id": tx_id,
+                        "corrected_category": st.session_state.corrected_category,
+                    },
+                ).json()
+
+                st.session_state.last_override_response = override_res
+                st.success("Correction saved. Merchant memory updated.")
+                st.json(override_res)
+
+        else:
+            st.info("No human correction needed for this transaction.")
+            
+            # Clear the override response when viewing a transaction that doesn't need review
+            st.session_state.last_override_response = None
+
 
 # -------- CSV UPLOAD --------
 with tab2:
@@ -115,136 +228,21 @@ with tab3:
                 json={"description": base, "modifier": mod},
             ).json()
 
-            st.subheader("Counterfactual Result")
-            st.json(st.session_state.counterfactual_response)
+            # st.subheader("Counterfactual Result")
+            # st.json(st.session_state.counterfactual_response)
 
+        # =========================================================
+        # COUNTERFACTUAL UI — ONLY WHEN CALLED
+        # =========================================================
+        counterfactual_response = st.session_state.counterfactual_response
 
-# =========================================================
-# CLASSIFICATION UI — SHOWN ONLY FOR /classify
-# =========================================================
-classification_response = st.session_state.classification_response
+        if counterfactual_response and "original_category" in counterfactual_response:
 
-if classification_response and "decision" in classification_response:
+            st.markdown("### 🟧 Counterfactual Reasoning")
 
-    decision = classification_response.get("decision", {})
-    trust = classification_response.get("trust", {})
-    evidence = classification_response.get("evidence", {})
-    risk = classification_response.get("risk", {})
+            st.json(counterfactual_response)
 
-    st.markdown("### Decision Quality")
-
-    col1, col2 = st.columns(2)
-
-    conf = decision.get("confidence")
-    agree = trust.get("agreement_score")
-
-    col1.metric("Model Confidence", f"{conf:.2f}" if conf is not None else "-")
-    col2.metric("Cross-Model Agreement", f"{agree:.2f}" if agree is not None else "-")
-
-    # ---------- DECISION SUMMARY ----------
-    st.markdown("### 🟩 Decision Summary")
-
-    if decision.get("risk_level") == "High":
-        st.error("🔴 High Risk — Human Review Recommended")
-    elif decision.get("needs_review"):
-        st.warning("⚠ Human Review Recommended")
-    else:
-        st.success("🟢 Low-Risk Classification")
-
-    st.json(
-        {
-            "Final Category": decision.get("final_category"),
-            "Confidence": decision.get("confidence"),
-            "Needs Review": decision.get("needs_review"),
-            "Risk Level": decision.get("risk_level"),
-            "Source": decision.get("source"),
-        }
-    )
-
-    # ---------- TRUST SIGNALS ----------
-    st.markdown("### 🟦 Model Trust Signals")
-    st.json(trust)
-
-    # ---------- EVIDENCE ----------
-    st.markdown("### 🟪 Evidence Trail")
-    st.json(evidence)
-
-    # ---------- RISK ----------
-    st.markdown("### 🟨 Risk & Safety Flags")
-    st.json(risk)
-
-
-    # =========================================================
-    # HUMAN-IN-THE-LOOP CORRECTION
-    # =========================================================
-    st.markdown("### ✏️ Human Review & Correction")
-
-    tx_id = classification_response.get("transaction_id")
-    current_category = decision.get("final_category")
-
-    if tx_id and decision.get("needs_review"):
-
-        st.warning("This transaction is flagged for human review.")
-
-        with st.form("human_override_form"):
-
-            categories = [
-                "Travel",
-                "Meals & Entertainment",
-                "Software / SaaS",
-                "Office Supplies",
-                "Utilities",
-                "Subscriptions",
-                "Income",
-                "Rent",
-                "Contractors",
-                "Advertising & Marketing",
-                "Other Expenses",
-                "Needs Review",
-            ]
-
-            st.session_state.corrected_category = st.selectbox(
-                "Correct Category",
-                options=categories,
-                index=categories.index(current_category)
-                if current_category in categories
-                else categories.index("Needs Review"),
-            )
-
-            submitted = st.form_submit_button("Submit Correction")
-
-        if submitted:
-            override_res = requests.post(
-                f"{API_BASE}/correct",
-                json={
-                    "transaction_id": tx_id,
-                    "corrected_category": st.session_state.corrected_category,
-                },
-            ).json()
-
-            st.session_state.last_override_response = override_res
-            st.success("Correction saved. Merchant memory updated.")
-            st.json(override_res)
-
-    else:
-        st.info("No human correction needed for this transaction.")
-        
-        # Clear the override response when viewing a transaction that doesn't need review
-        st.session_state.last_override_response = None
-
-
-# =========================================================
-# COUNTERFACTUAL UI — ONLY WHEN CALLED
-# =========================================================
-counterfactual_response = st.session_state.counterfactual_response
-
-if counterfactual_response and "original_category" in counterfactual_response:
-
-    st.markdown("### 🟧 Counterfactual Reasoning")
-
-    st.json(counterfactual_response)
-
-    if counterfactual_response.get("changed"):
-        st.success("Category WOULD change based on modifier.")
-    else:
-        st.info("Category would NOT change — modifier does not shift classification.")
+            if counterfactual_response.get("changed"):
+                st.error("Category WOULD change based on modifier.")
+            else:
+                st.success("Category would NOT change — modifier does not shift classification.")
