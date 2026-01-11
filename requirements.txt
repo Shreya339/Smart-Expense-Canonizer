@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+sqlmodel
+sqlalchemy
+pydantic
+python-dotenv
+streamlit
+requests
+openai
+google-generativeai
+pandas
+pytest

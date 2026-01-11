@@ -1,0 +1,91 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Streamlit
+# =========================
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# =========================
+# Databases
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# Logs & Runtime Files
+# =========================
+logs/
+*.log
+audit.log
+
+# =========================
+# Test Artifacts
+# =========================
+.coverage
+htmlcov/
+coverage.xml
+
+# =========================
+# IDEs & Editors
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# =========================
+# OS Files
+# =========================
+Thumbs.db
+
+# =========================
+# Build / Distribution
+# =========================
+build/
+dist/
+*.tar.gz
+*.whl
+
+# =========================
+# Temporary Files
+# =========================
+*.tmp
+*.bak
+*.old
+
+# =========================
+# Model / Embedding Artifacts
+# (if you later persist embeddings to disk)
+# =========================
+embeddings/
+models/
