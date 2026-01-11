@@ -360,11 +360,6 @@ Run tests with:
 pytest
 ```
 
-Run tests with:
-```bash
-pytest
-```
-
 ---
 
 ##  Running the Project
