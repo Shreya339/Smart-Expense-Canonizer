@@ -1,8 +1,46 @@
-# Smart Expense Canonizer — Trust‑First AI Classification System
+# Smart Expense Canonizer - Trust‑First AI Classification System
 
 Smart Expense Canonizer is a **financial‑grade, explainable AI system** that classifies expense transactions while prioritizing **trust, safety, and auditability** over raw automation.
 
 This project is intentionally designed **not** as a “smart model demo”, but as a **production‑style AI decision system** suitable for fintech environments.
+
+---
+
+## Why This Project Exists
+
+This project started with a simple question:
+
+**Can we really trust AI when it touches our money?**
+
+Over the past year, I’d been experimenting deeply with the GenAI ecosystem, working with models from OpenAI, Gemini, Llama, Hugging Face, and tools like vector databases. Getting models to do impressive things was fun, and frankly, not that hard.
+
+But I realized that wasn’t the real challenge.
+
+_The real problem is trust._
+
+If an AI summarizes a poem incorrectly, that’s harmless.
+If it misclassifies a financial transaction, the consequences are very real - taxes, reporting errors, audits, and compliance risk.
+
+As I explored this space, a few core issues became obvious:
+
+- Most AI systems still operate as black boxes. They produce answers without clearly explaining why.
+
+- Models often respond confidently even when they’re uncertain or guessing.
+
+- In financial workflows, misclassification isn’t just a mistake, it’s a risk.
+
+## The Mission
+
+The goal of this project is simple and deliberate:
+
+> **Build AI that explains its decisions.**
+
+Surface uncertainty instead of hiding it.
+
+Keep humans in the loop when accuracy truly matters.
+
+This isn’t about flashy demos or blind automation.
+It’s about designing AI systems people can understand, trust, and rely on - especially when the stakes are financial.
 
 ---
 
@@ -51,12 +89,12 @@ It says:
 └─────┬──────┘
       │
       ▼
-┌────────────┐
-│  FastAPI   │   ← API Layer
-│  /classify │   ← Main classification endpoint
-│  /correct  │   ← Human correction endpoint
+┌─────────────────┐
+│  FastAPI        │   ← API Layer
+│  /classify      │   ← Main classification endpoint
+│  /correct       │   ← Human correction endpoint
 │ /counterfactual │ ← What-if testing endpoint
-└─────┬──────┘
+└─────┬───────────┘
       │
       ▼
 ┌───────────────────────────────────────┐
@@ -121,13 +159,6 @@ Every classification returns:
 - **PII Redaction Flags** (whether sensitive data was detected and removed)
 
 No silent failures. No black boxes.
-
-### Source Types
-
-- **`rules`**: Deterministic rule-based classification (confidence: 0.95)
-- **`embedding`**: Semantic similarity match from merchant memory (confidence: 0.90)
-- **`human_verified`**: Previously corrected by human (confidence: 0.95, highest priority)
-- **`llm`**: AI model classification (confidence: varies based on model certainty)
 
 ### Source Types
 
@@ -204,7 +235,7 @@ Main classification endpoint. Accepts expense description and returns classifica
 **Request:**
 ```json
 {
-  "description": "Uber ride to airport",
+  "description": "LAX metro ride",
   "amount": 45.50,
   "date": "2024-01-15"
 }
@@ -213,31 +244,54 @@ Main classification endpoint. Accepts expense description and returns classifica
 **Response:**
 ```json
 {
-  "transaction_id": 123,
+  "transaction_id": 7,
   "decision": {
     "final_category": "Travel",
-    "confidence": 0.95,
+    "confidence": 0.8,
     "needs_review": false,
-    "risk_level": "Low",
-    "source": "rules"
+    "risk_level": "Medium",
+    "source": "llm"
   },
   "trust": {
-    "agreement_score": 1.0,
+    "agreement_score": 1,
     "self_consistent": true,
     "cross_model_used": false,
-    "risk_flags": []
+    "risk_flags": [
+      "low_embedding_similarity",
+      "embedding_drift_detected"
+    ]
   },
   "evidence": {
-    "merchant_normalized": "uber ride to airport",
-    "evidence_list": ["Matched rule token 'uber'", "Confirmed by rules"],
-    "summary": "Rule-based classification"
+    "merchant_normalized": "lax metro",
+    "evidence_list": [
+      "Embedding similarity 0.58 to 'flyaway lax'",
+      "Decision made via llm",
+      "Embedding drift detected vs historical merchant patterns"
+    ],
+    "summary": ""
   },
   "risk": {
-    "risk_score": 0.0,
+    "risk_score": 0.30000000000000004,
     "needs_review": false,
     "pii_redaction": false,
-    "risk_flags": []
+    "risk_flags": [
+      "low_embedding_similarity",
+      "embedding_drift_detected"
+    ]
   }
+}
+```
+
+**Evidence Trail**
+```json
+{
+  "merchant_normalized": "lax metro",
+  "evidence_list": [
+    "Embedding similarity 0.58 to 'flyaway lax'",
+    "Decision made via llm",
+    "Embedding drift detected vs historical merchant patterns"
+  ],
+  "summary": ""
 }
 ```
 
@@ -300,11 +354,6 @@ Example:
   - End‑to‑end API behavior
 
 Tests are written with clarity and comments — like production code.
-
-Run tests with:
-```bash
-pytest
-```
 
 Run tests with:
 ```bash
