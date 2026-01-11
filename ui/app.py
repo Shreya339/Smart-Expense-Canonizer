@@ -22,12 +22,24 @@ with st.sidebar.expander("🔧 Developer Controls"):
 # ================= API CONFIG =================
 API_BASE = st.secrets.get("API_URL", "http://localhost:8000")
 
+
+# ================= SESSION STATE =================
+if "classification_response" not in st.session_state:
+    st.session_state.classification_response = None
+
+if "counterfactual_response" not in st.session_state:
+    st.session_state.counterfactual_response = None
+
+if "last_override_response" not in st.session_state:
+    st.session_state.last_override_response = None
+
+if "corrected_category" not in st.session_state:
+    st.session_state.corrected_category = None
+
+
 # ================= PAGE =================
 st.set_page_config(page_title="Smart Expense Canonizer", layout="centered")
 st.title("💼 Smart Expense Canonizer — Trust-First AI Classification")
-
-classification_response = None
-counterfactual_response = None
 
 
 # ================= TABS =================
@@ -44,13 +56,15 @@ with tab1:
         if not desc.strip():
             st.warning("Please enter a description.")
         else:
-            classification_response = requests.post(
+            # Clear previous override response when starting a new classification
+            st.session_state.last_override_response = None
+            st.session_state.classification_response = requests.post(
                 f"{API_BASE}/classify",
                 json={"description": desc, "amount": amt},
             ).json()
 
             st.subheader("RAW Backend JSON")
-            st.json(classification_response)
+            st.json(st.session_state.classification_response)
 
 
 # -------- CSV UPLOAD --------
@@ -96,18 +110,20 @@ with tab3:
 
     if st.button("Run What-If"):
         if base and mod:
-            counterfactual_response = requests.post(
+            st.session_state.counterfactual_response = requests.post(
                 f"{API_BASE}/counterfactual",
                 json={"description": base, "modifier": mod},
             ).json()
 
             st.subheader("Counterfactual Result")
-            st.json(counterfactual_response)
+            st.json(st.session_state.counterfactual_response)
 
 
 # =========================================================
 # CLASSIFICATION UI — SHOWN ONLY FOR /classify
 # =========================================================
+classification_response = st.session_state.classification_response
+
 if classification_response and "decision" in classification_response:
 
     decision = classification_response.get("decision", {})
@@ -115,22 +131,15 @@ if classification_response and "decision" in classification_response:
     evidence = classification_response.get("evidence", {})
     risk = classification_response.get("risk", {})
 
-    st.markdown("### 🔐 Decision Quality")
+    st.markdown("### Decision Quality")
 
     col1, col2 = st.columns(2)
 
     conf = decision.get("confidence")
     agree = trust.get("agreement_score")
 
-    if conf is not None:
-        col1.metric("Model Confidence", f"{conf:.2f}")
-    else:
-        col1.metric("Model Confidence", "-")
-
-    if agree is not None:
-        col2.metric("Cross-Model Agreement", f"{agree:.2f}")
-    else:
-        col2.metric("Cross-Model Agreement", "-")
+    col1.metric("Model Confidence", f"{conf:.2f}" if conf is not None else "-")
+    col2.metric("Cross-Model Agreement", f"{agree:.2f}" if agree is not None else "-")
 
     # ---------- DECISION SUMMARY ----------
     st.markdown("### 🟩 Decision Summary")
@@ -154,40 +163,81 @@ if classification_response and "decision" in classification_response:
 
     # ---------- TRUST SIGNALS ----------
     st.markdown("### 🟦 Model Trust Signals")
-    st.json(
-        {
-            "Agreement Score": trust.get("agreement_score"),
-            "Self-Consistent": trust.get("self_consistent"),
-            "Cross-Model Used": trust.get("cross_model_used"),
-            "Risk Flags": trust.get("risk_flags"),
-        }
-    )
+    st.json(trust)
 
     # ---------- EVIDENCE ----------
     st.markdown("### 🟪 Evidence Trail")
-    st.json(
-        {
-            "Normalized Merchant": evidence.get("merchant_normalized"),
-            "Evidence": evidence.get("evidence_list"),
-            "Summary": evidence.get("summary"),
-        }
-    )
+    st.json(evidence)
 
     # ---------- RISK ----------
     st.markdown("### 🟨 Risk & Safety Flags")
-    st.json(
-        {
-            "Risk Score": risk.get("risk_score"),
-            "Needs Review": risk.get("needs_review"),
-            "PII Redaction": risk.get("pii_redaction"),
-            "Risk Flags": risk.get("risk_flags"),
-        }
-    )
+    st.json(risk)
+
+
+    # =========================================================
+    # HUMAN-IN-THE-LOOP CORRECTION
+    # =========================================================
+    st.markdown("### ✏️ Human Review & Correction")
+
+    tx_id = classification_response.get("transaction_id")
+    current_category = decision.get("final_category")
+
+    if tx_id and decision.get("needs_review"):
+
+        st.warning("This transaction is flagged for human review.")
+
+        with st.form("human_override_form"):
+
+            categories = [
+                "Travel",
+                "Meals & Entertainment",
+                "Software / SaaS",
+                "Office Supplies",
+                "Utilities",
+                "Subscriptions",
+                "Income",
+                "Rent",
+                "Contractors",
+                "Advertising & Marketing",
+                "Other Expenses",
+                "Needs Review",
+            ]
+
+            st.session_state.corrected_category = st.selectbox(
+                "Correct Category",
+                options=categories,
+                index=categories.index(current_category)
+                if current_category in categories
+                else categories.index("Needs Review"),
+            )
+
+            submitted = st.form_submit_button("Submit Correction")
+
+        if submitted:
+            override_res = requests.post(
+                f"{API_BASE}/correct",
+                json={
+                    "transaction_id": tx_id,
+                    "corrected_category": st.session_state.corrected_category,
+                },
+            ).json()
+
+            st.session_state.last_override_response = override_res
+            st.success("Correction saved. Merchant memory updated.")
+            st.json(override_res)
+
+    else:
+        st.info("No human correction needed for this transaction.")
+        
+        # Clear the override response when viewing a transaction that doesn't need review
+        st.session_state.last_override_response = None
 
 
 # =========================================================
 # COUNTERFACTUAL UI — ONLY WHEN CALLED
 # =========================================================
+counterfactual_response = st.session_state.counterfactual_response
+
 if counterfactual_response and "original_category" in counterfactual_response:
 
     st.markdown("### 🟧 Counterfactual Reasoning")
