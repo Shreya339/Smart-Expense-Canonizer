@@ -160,19 +160,60 @@ Every classification returns:
 
 No silent failures. No black boxes.
 
-### Source Types
+### Confidence Source Types
 
-- **`rules`**: Deterministic rule-based classification (confidence: 0.95)
-- **`embedding`**: Semantic similarity match from merchant memory (confidence: 0.90)
-- **`human_verified`**: Previously corrected by human (confidence: 0.95, highest priority)
-- **`llm`**: AI model classification (confidence: varies based on model certainty)
+- **`rules`**: Deterministic, rule-based classification  
+  *Confidence: 0.95*
+
+- **`embedding`**: Semantic similarity match using merchant memory  
+  *Confidence: 0.90*
+
+- **`human_verified`**: Category previously corrected by a human  
+  *Confidence: 0.95 (highest priority)*
+
+- **`llm`**: AI model–based classification  
+  *Confidence: Derived directly from the model’s output. It is not recomputed or normalized and is treated strictly as a trust signal — not a calibrated probability of correctness.*
+
+  **Validation checks for LLM confidence:**
+  - Confidence must be between **0.0 and 1.0**
+  - Confidence is compared across repeated calls to assess stability *(Δ ≤ 0.15)*
+  - The system intentionally does **not** recalibrate model confidence, as LLM confidence is not guaranteed to be well-calibrated
+
+  **Instead, the system prioritizes:**
+  - Consistency across model runs
+  - Agreement score
+  - Fallback validation
+  - Risk signals
+
 
 ---
 
-## Model Orchestration & Decision Flow
+## Model Orchestration & LLM Decision Flow
 
-This system uses a trust-first orchestration strategy for LLM-based classification.
-It prioritizes self-agreement within a single model, escalates on instability, and never hides uncertainty.
+The system uses two independent large language model (LLM) providers to reduce single-model risk and make uncertainty explicit.
+
+LLMs are inherently probabilistic and can:
+- Be unstable across runs
+- Hallucinate with high confidence
+- Fail partially or completely
+
+Relying on a single model would make these failures silent.  
+Using two independent models allows the system to **detect disagreement instead of hiding it**.
+
+The goal is not to “get another opinion,” but to **verify stability and expose uncertainty**.
+
+### How the Two Models Are Used
+
+- **OpenAI** serves as the primary model  
+- **Gemini** acts as a fallback and validator  
+
+The system:
+- Calls OpenAI multiple times to check self-consistency
+- Uses Gemini only if OpenAI is unstable or unavailable
+- Compares outputs to measure agreement
+- Escalates to human review when trust is low  
+
+Gemini is never invoked unnecessarily, keeping both **cost and latency controlled**.
 
 ```
 OPENAI (PRIMARY MODEL)
@@ -216,6 +257,44 @@ GEMINI (FALLBACK VALIDATOR)
 └──────────────────────────────┘   └──────────────────────────────┘   └──────────────────────────────┘   └──────────────────────────────┘
 
 ```
+### Why OpenAI (Primary Model)
+
+OpenAI is chosen as the primary model due to:
+- Strong instruction-following capabilities
+- Reliable structured JSON output
+- Stable behavior under low-temperature settings
+- A mature ecosystem and tooling
+
+These properties make it well-suited for:
+- Deterministic classification
+- Schema-constrained outputs
+- Financial and bookkeeping workflows
+
+OpenAI is optimized for **precision and structure**, which is critical for first-pass decisions.
+
+### Why Gemini (Fallback Model)
+
+Gemini is selected as the fallback model because it provides:
+- A completely independent model family
+- Different training data and inductive biases
+- Strong semantic interpretation capabilities
+- High availability as a secondary provider
+
+Gemini is not used to override OpenAI, but to **validate or challenge its output**.
+
+### Why Not Just One Model?
+
+Using a single model would mean:
+- No way to detect hallucinations
+- No way to detect instability
+- No way to distinguish confidence from correctness
+
+Using two models allows the system to:
+- Detect disagreement
+- Surface uncertainty
+- Fail safely instead of silently
+
+I made this choice a **trust and safety design decision**, not an accuracy hack.
 <br>
 <br>
 
@@ -287,7 +366,12 @@ The `/correct` endpoint enables safe learning from human corrections:
 
 ### How It Works
 
-1. **Human Reviews Transaction**: When a transaction is flagged as "Needs Review" or user wants to correct it
+1. **Human Reviews Transaction**: When a transaction is flagged as "Needs Review" or user wants to correct it. The UI enables Human Review when any of the following are true:
+      - Reliability is marked as low
+      - Self-consistency check failed
+      - Fallback model (Gemini) was used
+      - One or more high-risk flags are present
+      - No classification could be produced
 2. **Correction Submitted**: User submits corrected category via `/correct` endpoint
 3. **Safe Learning**: 
    - Transaction is marked as overridden in the database
