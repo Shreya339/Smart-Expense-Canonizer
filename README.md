@@ -80,6 +80,19 @@ It says:
 > because similar merchants were classified this way in the past.”
 
 ---
+##  Why This Matters
+
+Financial systems cannot afford:
+- Confidently wrong AI
+- Silent failures
+- Unexplainable decisions
+
+This system is built to:
+- Surface uncertainty
+- Preserve human control
+- Earn trust incrementally
+
+---
 
 ##  High‑Level Architecture
 
@@ -615,17 +628,25 @@ ORDER BY num_seen DESC;
 ```
 ---
 
-##  Why This Matters
+## Future Improvements
 
-Financial systems cannot afford:
-- Confidently wrong AI
-- Silent failures
-- Unexplainable decisions
+#### Security & Access Control
+Add API authentication, secrets management, and PII-safe logging to harden the system for production use.
 
-This system is built to:
-- Surface uncertainty
-- Preserve human control
-- Earn trust incrementally
+#### Rate Limiting & Reliability
+Introduce per-user and per-IP rate limiting, along with circuit breakers, to prevent abuse, control LLM costs, and avoid cascading failures.
+
+#### Scalable Storage (SQL / NoSQL)
+Migrate from SQLite to PostgreSQL for stronger auditability, and introduce a NoSQL store for high-volume transaction logs and model metadata.
+
+#### Ensemble & Majority Voting
+Extend beyond pairwise checks to majority or weighted voting across multiple model calls to further reduce noise and improve decision robustness.
+
+#### Risk & Learning Enhancements
+Convert qualitative risk flags into a numeric risk score, and use human corrections as feedback signals rather than blind retraining.
+
+#### Extensibility & Deployment
+Containerize the service, add CI/CD pipelines, and deploy behind a load balancer with environment-based configuration to support horizontal scaling and easy model swaps.
 
 ---
 
