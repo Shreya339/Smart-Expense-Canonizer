@@ -221,7 +221,7 @@ The goal is not to “get another opinion,” but to **verify stability and expo
 - **Gemini** acts as a fallback and validator  
 
 The system:
-- Calls OpenAI multiple times to check self-consistency
+- Calls OpenAI twice with varying temperatures to check self-consistency
 - Uses Gemini only if OpenAI is unstable or unavailable
 - Compares outputs to measure agreement
 - Escalates to human review when trust is low  
