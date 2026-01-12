@@ -169,23 +169,6 @@ No silent failures. No black boxes.
 
 ---
 
-##  Risk Scoring Logic
-
-Risk increases when:
-- Confidence is low
-- Similarity is weak
-- Merchant is unseen
-- Overrides are frequent
-- Drift is detected
-- Validation flags appear
-
-Risk is capped at **1.0** and mapped to:
-- Low
-- Medium
-- High
-
----
-
 ## Model Orchestration & Decision Flow
 
 This system uses a trust-first orchestration strategy for LLM-based classification.
@@ -235,6 +218,52 @@ GEMINI (FALLBACK VALIDATOR)
 ```
 <br>
 <br>
+
+---
+
+##  Risk Scoring Logic
+
+Risk increases when:
+- Confidence is low
+- Similarity is weak
+- Merchant is unseen
+- Overrides are frequent
+- Drift is detected
+- Validation flags appear
+
+Risk is capped at **1.0** and mapped to:
+- Low
+- Medium
+- High
+
+**Table 1: Risk Signals & How They Increase Risk**
+<br>
+
+| Risk Signal                 | How It Appears in the System       | What Triggers It                                      | Effect on Risk                                   | Why It Matters                                            |
+| --------------------------- | ---------------------------------- | ----------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
+| **Low Model Confidence**    | `confidence` field in LLM response | Very low confidence values or “Needs Review” category | Prevents early acceptance; escalates to fallback | Low confidence indicates uncertainty, not failure         |
+| **Unstable Confidence**     | `_confidence_close()` check        | Large confidence delta between repeated calls         | Adds `high_confidence_variance` flag             | Confidence instability suggests model brittleness         |
+| **Category Disagreement**   | `_self_consistent()` failure       | Different categories across repeated calls            | Adds `model_disagreement`; escalates             | Outcome instability is more dangerous than low confidence |
+| **Weak Semantic Agreement** | `_agreement_score()`               | Disagreement across OpenAI and Gemini                 | Lowers reliability score                         | Similar inputs should produce similar outputs             |
+| **Unseen Merchant**         | No historical data available       | First-time merchant or transaction                    | Implicitly higher risk                           | Cold-start decisions lack historical validation           |
+| **Frequent Overrides**      | Stored human corrections           | Repeated human intervention                           | Increases future risk                            | Human disagreement signals persistent ambiguity           |
+| **Drift Detected**          | Embedding similarity checks        | Merchant behavior deviates over time                  | Downgrades reliability                           | Historical correctness may no longer apply                |
+| **Validation Failures**     | `validate_json_candidate`          | Invalid JSON, missing fields                          | Adds structural risk flags                       | Structural errors are early indicators of instability     |
+| **Partial Model Responses** | Model call failures                | One call succeeds, one fails                          | Adds partial response flags                      | Single responses are insufficient for trust               |
+| **Total Model Failure**     | No valid model output              | All LLM calls fail                                    | Maximum risk                                     | System must explicitly admit inability to decide          |
+
+<br>
+
+**Table 2: Risk → Reliability → Action Mapping**
+<br>
+
+| Reliability Level               | Risk Characteristics                    | Typical Signals Present                                  | System Action             | Automation Policy         |
+| ------------------------------- | --------------------------------------- | -------------------------------------------------------- | ------------------------- | ------------------------- |
+| **Low Risk** (High Reliability) | Stable, consistent, high agreement      | Self-consistent outputs; agreement ≥ 0.8; no major flags | Auto-apply classification | Safe for automation       |
+| **Medium Risk**                 | Internally stable, externally uncertain | Minor disagreement; partial fallback; moderate agreement | Apply with monitoring     | Logged and reviewed later |
+| **High Risk** (Low Reliability) | Unstable or degraded decision           | Disagreement; drift; partial failures; overrides         | Require human review      | Automation blocked        |
+| **Maximum Risk**                | No reliable output                      | All model calls failed                                   | Return `None` + flags     | Manual handling required  |
+
 
 ---
 
