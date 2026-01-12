@@ -74,10 +74,24 @@ def call_gemini(description: str, temperature: float) -> Optional[str]:
 
 
 # ======================
-# CORE LOGIC
+# TRUST HELPERS
 # ======================
+def _confidence(c: dict) -> float:
+    return float(c.get("confidence", 0.0))
+
+
+def _confidence_close(a: dict, b: dict, delta: float = 0.15) -> bool:
+    return abs(_confidence(a) - _confidence(b)) <= delta
+
+
 def _self_consistent(a: dict, b: dict) -> bool:
-    return a.get("category") == b.get("category")
+    """
+    Self-consistency = same category AND stable confidence.
+    """
+    return (
+        a.get("category") == b.get("category")
+        and _confidence_close(a, b)
+    )
 
 
 def _agreement_score(categories: List[str]) -> float:
@@ -85,11 +99,44 @@ def _agreement_score(categories: List[str]) -> float:
     return round(best / len(categories), 3)
 
 
+def _resolve_disagreement(candidates: List[dict]) -> Tuple[Optional[dict], List[str]]:
+    """
+    Conservative disagreement resolution:
+    - Pick highest confidence
+    - Surface variance as risk
+    """
+    if not candidates:
+        return None, ["model_disagreement"]
+
+    confidences = [_confidence(c) for c in candidates]
+    chosen = max(candidates, key=_confidence)
+
+    flags = ["model_disagreement"]
+    if max(confidences) - min(confidences) > 0.3:
+        flags.append("high_confidence_variance")
+
+    return chosen, flags
+
+
+def _reliability_level(meta: dict) -> str:
+    """
+    Explicitly encode non-guaranteed correctness.
+    """
+    if meta.get("self_consistent") and meta.get("agreement_score", 0) >= 0.8:
+        return "high"
+    if meta.get("self_consistent"):
+        return "medium"
+    return "low"
+
+
+# ======================
+# CORE LOGIC
+# ======================
 def classify_with_models(description: str):
     """
     LOCKED LOGIC:
     - OpenAI twice → self-consistency
-    - Gemini twice ONLY if OpenAI unusable
+    - Gemini twice ONLY if OpenAI unusable or unstable
     """
 
     risk_flags = []
@@ -108,33 +155,22 @@ def classify_with_models(description: str):
         all_categories += [o1["category"], o2["category"]]
 
         if _self_consistent(o1, o2):
-            return (
-                o1,
-                {
-                    "self_consistent": True,
-                    "cross_model_used": False,
-                    "agreement_score": 1.0,
-                    "risk_flags": risk_flags
-                }
-            )
-        else:
-            risk_flags.append("openai_self_inconsistent")
-            # don't return, continue to gemini
+            meta = {
+                "self_consistent": True,
+                "cross_model_used": False,
+                "agreement_score": 1.0,
+                "risk_flags": risk_flags,
+            }
+            meta["reliability"] = _reliability_level(meta)
+            return o1, meta
+
+        # Resolve OpenAI disagreement intelligently
+        chosen, flags = _resolve_disagreement([o1, o2])
+        risk_flags.extend(flags)
+        risk_flags.append("openai_self_inconsistent")
 
     elif o1 or o2:
-        risk_flags.append("partial_openai_response");
-
-        # if one call fails, don't return, continue to gemini
-
-        # return (
-        #     chosen,
-        #     {
-        #         "self_consistent": False,
-        #         "cross_model_used": False,
-        #         "agreement_score": None,
-        #         "risk_flags": risk_flags + ["partial_openai_response"]
-        #     }
-        # )
+        risk_flags.append("partial_openai_response")
 
     # -------- GEMINI FALLBACK --------
     g1_raw = call_gemini(description, temperature=0.2)
@@ -145,34 +181,23 @@ def classify_with_models(description: str):
 
     risk_flags.extend(f3 + f4)
 
-    if g1 and g2:
-        all_categories += [g1["category"], g2["category"]]
+    candidates = [c for c in [g1, g2] if c]
 
+    if candidates:
+        all_categories += [c["category"] for c in candidates]
         agreement = _agreement_score(all_categories)
 
-        return (
-            g1 if _self_consistent(g1, g2) else g1,
-            {
-                "self_consistent": _self_consistent(g1, g2),
-                "cross_model_used": True,
-                "agreement_score": agreement,
-                "risk_flags": risk_flags
-            }
-        )
+        chosen, flags = _resolve_disagreement(candidates)
+        risk_flags.extend(flags)
 
-    elif g1 or g2:
-        risk_flags.append("partial_gemini_response");
-
-        # if one call fails, don't return, escalate to total failure
-        # return (
-        #     chosen,
-        #     {
-        #         "self_consistent": False,
-        #         "cross_model_used": True,
-        #         "agreement_score": None,
-        #         "risk_flags": risk_flags + ["partial_gemini_response"]
-        #     }
-        # )
+        meta = {
+            "self_consistent": len(candidates) == 2 and _self_consistent(g1, g2),
+            "cross_model_used": True,
+            "agreement_score": agreement,
+            "risk_flags": risk_flags,
+        }
+        meta["reliability"] = _reliability_level(meta)
+        return chosen, meta
 
     # -------- TOTAL FAILURE --------
     return (
@@ -181,6 +206,7 @@ def classify_with_models(description: str):
             "self_consistent": False,
             "cross_model_used": True,
             "agreement_score": None,
-            "risk_flags": risk_flags + ["all_model_calls_failed"]
+            "risk_flags": risk_flags + ["all_model_calls_failed"],
+            "reliability": "low",
         }
     )
