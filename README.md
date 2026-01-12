@@ -186,6 +186,58 @@ Risk is capped at **1.0** and mapped to:
 
 ---
 
+## Model Orchestration & Decision Flow
+
+This system uses a trust-first orchestration strategy for LLM-based classification.
+It prioritizes self-agreement within a single model, escalates on instability, and never hides uncertainty.
+
+```
+OPENAI (PRIMARY MODEL)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ O1: BOTH CALLS SUCCEED       │ → │ O2: BOTH CALLS SUCCEED       │ → │ O3: PARTIAL OPENAI SUCCESS   │ → │ O4: OPENAI TOTAL FAILURE     │
+│ AND SELF-CONSISTENT          │   │ BUT DISAGREE                 │   │                              │   │                              │
+│                              │   │                              │   │ • One call fails             │   │ • Both calls fail            │
+│ • Same category              │   │ • Category mismatch OR       │   │ • One valid response         │   │                              │
+│ • Stable confidence          │   │ • High confidence variance   │   │                              │   │ → No OpenAI candidate        │
+│                              │   │                              │   │ → Add partial_openai flag    │   │ → Fallback to Gemini         │
+│ → RETURN IMMEDIATELY         │   │ → Add risk flags             │   │ → DO NOT RETURN              │   │                              │
+│ → Gemini NOT called          │   │ → Temp best guess            │   │ → Fallback to Gemini         │   │ WHY: Availability > silence  │
+│ → reliability = HIGH         │   │ → Fallback to Gemini         │   │                              │   │ but never blind trust        │
+│                              │   │                              │   │ WHY: Single response is      │   │                              │
+│ WHY: Model agrees with       │   │ WHY: Instability detected    │   │ insufficient for trust       │   │                              │
+│ itself under randomness      │   │ — trust cannot be assumed    │   │                              │   │                              │
+└──────────────────────────────┘   └──────────────────────────────┘   └──────────────────────────────┘   └──────────────────────────────┘
+
+
+
+GEMINI (FALLBACK VALIDATOR)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ G1: BOTH CALLS SUCCEED       │ → │ G2: BOTH CALLS SUCCEED       │ → │ G3: PARTIAL GEMINI SUCCESS   │ → │ G4: GEMINI TOTAL FAILURE     │
+│ AND SELF-CONSISTENT          │   │ BUT DISAGREE                 │   │                              │   │                              │
+│                              │   │                              │   │ • One valid response         │   │ • All model calls fail       │
+│ • Same category              │   │ • Category mismatch OR       │   │                              │   │                              │
+│ • Stable confidence          │   │ • Confidence variance        │   │ → Pick available candidate   │   │ → RETURN None                │
+│                              │   │                              │   │ → Add partial_gemini flag    │   │ → reliability = LOW          │
+│ → Compute cross-model        │   │ → Resolve disagreement       │   │ → RETURN with low trust      │   │ → needs human review         │
+│   agreement score            │   │ → Add strong risk flags      │   │                              │   │                              │
+│ → RETURN RESULT              │   │ → RETURN best-effort result  │   │ WHY: Degraded operation is   │   │ WHY: System must admit it    │
+│ → reliability = MEDIUM/LOW   │   │                              │   │ better than silent failure   │   │ cannot decide                │
+│                              │   │ WHY: Even fallback model is  │   │                              │   │                              │
+│ WHY: Gemini is stable, but   │   │ unstable → lowest trust      │   │                              │   │                              │
+│ OpenAI instability lowers    │   │                              │   │                              │   │                              │
+│ overall trust                │   │                              │   │                              │   │                              │
+└──────────────────────────────┘   └──────────────────────────────┘   └──────────────────────────────┘   └──────────────────────────────┘
+
+```
+<br>
+<br>
+
+---
+
 ##  Counterfactual Reasoning
 
 The `/counterfactual` endpoint answers:
