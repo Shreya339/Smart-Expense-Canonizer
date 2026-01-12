@@ -119,20 +119,24 @@ def classify_with_models(description: str):
             )
         else:
             risk_flags.append("openai_self_inconsistent")
+            # don't return, continue to gemini
 
     elif o1 or o2:
         chosen = o1 or o2
         all_categories.append(chosen["category"])
+        risk_flags.append("partial_openai_response");
 
-        return (
-            chosen,
-            {
-                "self_consistent": False,
-                "cross_model_used": False,
-                "agreement_score": None,
-                "risk_flags": risk_flags + ["partial_openai_response"]
-            }
-        )
+        # if one call fails, don't return, continue to gemini
+
+        # return (
+        #     chosen,
+        #     {
+        #         "self_consistent": False,
+        #         "cross_model_used": False,
+        #         "agreement_score": None,
+        #         "risk_flags": risk_flags + ["partial_openai_response"]
+        #     }
+        # )
 
     # -------- GEMINI FALLBACK --------
     g1_raw = call_gemini(description, temperature=0.2)
@@ -161,16 +165,18 @@ def classify_with_models(description: str):
     elif g1 or g2:
         chosen = g1 or g2
         all_categories.append(chosen["category"])
+        risk_flags.append("partial_gemini_response");
 
-        return (
-            chosen,
-            {
-                "self_consistent": False,
-                "cross_model_used": True,
-                "agreement_score": None,
-                "risk_flags": risk_flags + ["partial_gemini_response"]
-            }
-        )
+        # if one call fails, don't return, escalate to total failure
+        # return (
+        #     chosen,
+        #     {
+        #         "self_consistent": False,
+        #         "cross_model_used": True,
+        #         "agreement_score": None,
+        #         "risk_flags": risk_flags + ["partial_gemini_response"]
+        #     }
+        # )
 
     # -------- TOTAL FAILURE --------
     return (
