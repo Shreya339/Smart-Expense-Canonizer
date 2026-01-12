@@ -186,6 +186,51 @@ Risk is capped at **1.0** and mapped to:
 
 ---
 
+## Model Orchestration & Decision Flow
+
+This system uses a trust-first orchestration strategy for LLM-based classification.
+It prioritizes self-agreement within a single model, escalates on instability, and never hides uncertainty.
+
+### OpenAI Decision Paths
+| OpenAI Scenario                               | What the System Does           | Returned Result                  | Rationale                                   |
+| --------------------------------------------- | ------------------------------ | -------------------------------- | ------------------------------------------- |
+| **Both OpenAI calls fail**                    | Skip OpenAI entirely           | Escalate to Gemini               | No valid signal → do not guess              |
+| **One OpenAI call succeeds, one fails**       | Accept the successful response | OpenAI result + risk flags       | Partial signal is usable but low trust      |
+| **Both calls succeed & same category**        | Self-agreement achieved        | Return OpenAI result immediately | Stable model output → fast & cost-efficient |
+| **Both calls succeed & different categories** | Self-agreement fails           | Escalate to Gemini               | Model instability → unsafe to trust         |
+
+<br>
+
+### Gemini Decision Paths (Fallback Model)
+| Gemini Scenario                               | What the System Does           | Returned Result            | Rationale                           |
+| --------------------------------------------- | ------------------------------ | -------------------------- | ----------------------------------- |
+| **Both Gemini calls fail**                    | Total model failure            | `None` + human review      | No safe automated decision possible |
+| **One Gemini call succeeds, one fails**       | Accept the successful response | Gemini result + risk flags | Partial signal with reduced trust   |
+| **Both calls succeed & same category**        | Gemini self-agreement          | Return Gemini result       | Independent model shows stability   |
+| **Both calls succeed & different categories** | Gemini disagreement            | Return result + high risk  | Even fallback model is unstable     |
+
+<br>
+
+### Cross-Model Behavior (OpenAI + Gemini Combined)
+| Situation                       | System Behavior                          | Why It Matters                                         |
+| ------------------------------- | ---------------------------------------- | ------------------------------------------------------ |
+| OpenAI unstable → Gemini stable | Gemini result returned                   | Independent stability outweighs internal inconsistency |
+| OpenAI & Gemini both unstable   | Result returned with low agreement score | Indicates deep ambiguity                               |
+| OpenAI stable                   | Gemini not invoked                       | Optimizes cost and latency                             |
+| Categories differ across models | Agreement score decreases                | Captures system-wide uncertainty                       |
+
+<br>
+
+### Total Failure Scenario
+| Condition                                       | Outcome                        | Rationale                |
+| ----------------------------------------------- | ------------------------------ | ------------------------ |
+| All OpenAI calls fail AND all Gemini calls fail | `None` + human review required | Guessing would be unsafe |
+
+<br>
+<br>
+
+---
+
 ##  Counterfactual Reasoning
 
 The `/counterfactual` endpoint answers:
