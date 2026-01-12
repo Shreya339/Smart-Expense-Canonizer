@@ -122,8 +122,6 @@ def classify_with_models(description: str):
             # don't return, continue to gemini
 
     elif o1 or o2:
-        chosen = o1 or o2
-        all_categories.append(chosen["category"])
         risk_flags.append("partial_openai_response");
 
         # if one call fails, don't return, continue to gemini
@@ -163,8 +161,6 @@ def classify_with_models(description: str):
         )
 
     elif g1 or g2:
-        chosen = g1 or g2
-        all_categories.append(chosen["category"])
         risk_flags.append("partial_gemini_response");
 
         # if one call fails, don't return, escalate to total failure
